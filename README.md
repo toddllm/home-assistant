@@ -408,6 +408,8 @@ graph TD
 
 The current rule-based system handles the critical safety logic. The AI layer will add intelligence on top — learning what "normal" looks like for this specific pump and environment, and catching subtle patterns that fixed thresholds miss.
 
+**[Read the full AI design document with three architecture options](docs/ai-monitoring-design.md)** — local Ollama, cloud API, or hybrid.
+
 ## Lessons Learned
 
 - **Energy monitoring is essential.** Without it, a smart plug is just a remote on/off switch. You can't detect if the pump is actually running.
