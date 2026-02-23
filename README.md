@@ -389,6 +389,12 @@ Mobile-friendly dark-themed web UI at `http://your-server:8077`
 - Recent monitor logs
 - Auto-refreshes every 15 seconds
 
+## Remote Access
+
+The dashboard is accessible on the local network at `http://your-server:8077`. For secure remote access from your phone or laptop on any network, use a Cloudflare Tunnel — zero open ports, free tier, built-in email authentication.
+
+**[Read the full Cloudflare Tunnel setup guide](docs/remote-access-cloudflare-tunnel.md)** — installation, configuration, Access policies, and security hardening.
+
 ## Future: AI Monitoring
 
 The system is designed to feed into an AI agent that will:
