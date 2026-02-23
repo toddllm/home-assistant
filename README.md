@@ -105,33 +105,40 @@ The monitor tracks pump power draw and progresses through states based on behavi
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NORMAL: Monitor starts
+    [*] --> NORMAL
 
-    NORMAL --> NORMAL: Pump idle (0W)<br/>or normal cycle (< 3 min)
-    NORMAL --> STUCK_DETECTED: Pump running > 3 min
+    NORMAL --> NORMAL : Pump idle or normal cycle
+    NORMAL --> STUCK_DETECTED : Pump running > 3 min
 
-    STUCK_DETECTED --> POWER_CYCLE: Auto power cycle<br/>(off 10s, on, wait 60s)
+    STUCK_DETECTED --> POWER_CYCLE : Off 10s, on, wait 60s
 
-    POWER_CYCLE --> NORMAL: Pump stopped!<br/>Float unstuck ✓<br/>→ notify "fixed"
-    POWER_CYCLE --> SAFE_MODE: Pump still running<br/>Float still stuck ✗
+    POWER_CYCLE --> NORMAL : Pump stopped - float unstuck
+    POWER_CYCLE --> SAFE_MODE : Still running - float stuck
 
-    SAFE_MODE --> SAFE_MODE: Duty cycle:<br/>2 min ON / 10 min OFF<br/>(clears water, prevents overheating)
-    SAFE_MODE --> NORMAL: Pump stops on its own<br/>Float unstuck ✓<br/>→ notify "back to normal"
+    SAFE_MODE --> SAFE_MODE : 2 min ON, 10 min OFF
+    SAFE_MODE --> NORMAL : Pump stops on its own
 
-    note right of SAFE_MODE
-        Keeps pumping water to
-        prevent flooding while
-        protecting the motor.
-        Sends updates every
-        3rd cycle.
+    NORMAL --> EMERGENCY_OFF : Temp exceeds 60C
+    SAFE_MODE --> EMERGENCY_OFF : Temp exceeds 60C
+
+    EMERGENCY_OFF --> NORMAL : Wait 5 min then resume
+
+    note right of NORMAL
+        Monitoring power draw
+        every 30 seconds
     end note
 
-    state OVERTEMP <<choice>>
-    NORMAL --> OVERTEMP: Temp > 60°C
-    SAFE_MODE --> OVERTEMP: Temp > 60°C
-    OVERTEMP --> EMERGENCY_OFF: Force OFF<br/>→ alert immediately
+    note right of SAFE_MODE
+        Duty cycles the pump
+        to clear water without
+        overheating the motor.
+        Notifies every 3rd cycle.
+    end note
 
-    EMERGENCY_OFF --> NORMAL: Wait 5 min<br/>then resume
+    note left of EMERGENCY_OFF
+        Forces pump OFF
+        and alerts immediately
+    end note
 ```
 
 ## Alert Matrix
