@@ -377,6 +377,10 @@ sudo systemctl enable --now sump-pump-dashboard
 
 Mobile-friendly dark-themed web UI at `http://your-server:8077`
 
+<p align="center">
+  <img src="images/dashboard-screenshot.png" alt="Sump Pump Dashboard" width="320">
+</p>
+
 - Live pump status (idle / running / off / error)
 - Real-time power, current, voltage (with frequency), temperature, light level
 - Color-coded health badges for voltage, temperature, WiFi signal
