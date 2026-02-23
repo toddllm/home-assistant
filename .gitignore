@@ -1,0 +1,5 @@
+.env
+*.log
+__pycache__/
+snapshot.json
+sump-pump-setup-notes.md
