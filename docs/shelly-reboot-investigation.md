@@ -1,9 +1,9 @@
 # Shelly Plug US Gen4 — Reboot/Crash Investigation
 
 **Device:** Shelly Plug US Gen4 (S4PL-00116US)
-**Firmware:** 1.7.99-plugusg4prod1 (pre-production build)
+**Firmware:** 1.7.99-plugusg4prod1 (factory build, 2025-10-21)
 **GitHub Issue:** [#1](https://github.com/toddllm/home-assistant/issues/1)
-**Status:** Monitoring after disabling Matter + BLE (2026-02-24)
+**Status:** Phase 1 — observing stability after disabling Matter + BLE
 
 ---
 
@@ -132,53 +132,167 @@ Reset reason:  3 (SW_RESET — expected from manual reboot)
 
 ---
 
-## Monitoring Plan
+## Remediation Plan
 
-### Success Criteria
-- **No watchdog resets (reason 4) for 72+ hours** → Matter/BLE was the cause
-- **No software resets (reason 3) for 72+ hours** → Confirmed fix
+Three phases, each testing one variable. Move to the next phase only if crashes continue.
 
-### Next Action: Update to Stable Firmware
+### Phase 1: Observe After Disabling Matter + BLE (current)
 
-If crashes stop with Matter/BLE disabled, the next step is to update firmware from 1.7.99 (dev) to **1.7.4 (stable)** — which includes the DNSSD crash fix. After updating, Matter and BLE could potentially be re-enabled if needed.
+**Started:** 2026-02-24 ~15:35 EST
+**Duration:** 72 hours (until ~2026-02-27 15:35 EST)
+**What changed:** Disabled Matter and BLE protocols
 
-```bash
-# Check for available updates
-curl "http://SHELLY_IP/rpc/Shelly.CheckForUpdate" --digest -u admin:PASSWORD
+**Success criteria:**
+- No watchdog resets (reason 4) for 72+ hours
+- No software resets (reason 3) for 72+ hours
 
-# Update to stable channel
-curl -X POST "http://SHELLY_IP/rpc/Shelly.Update" --digest -u admin:PASSWORD \
-  -H "Content-Type: application/json" -d '{"stage": "stable"}'
+**Baseline metrics after fix:**
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| RAM free | 147,496 bytes | 213,452 bytes | +45% |
+| RAM min (low watermark) | unknown | 203,564 bytes | — |
+| Matter | enabled (1 fabric) | disabled (0 fabrics) | — |
+| BLE | enabled | disabled | — |
+
+**If crashes stop** → Root cause confirmed as Matter/BLE memory pressure. Leave them disabled (we don't use them). Proceed to Phase 2 anyway for general hardening.
+
+**If crashes continue** → Matter/BLE wasn't the only cause. Proceed to Phase 2 immediately.
+
+**If a crash occurs during Phase 1:**
+1. Immediately check for core dump: `http://SHELLY_IP/debug/core`
+2. Save the dump before the monitor auto-recovers and reboots the device
+3. Record the reset_reason, uptime before crash, BSSID at time of crash
+
+### Phase 2: Firmware Update (after Phase 1)
+
+Update from factory firmware 1.7.99 (built 2025-10-21) to stable **1.7.4** (released 2026-01-27).
+
+**Why this matters:** Firmware 1.7.99 is the factory build that shipped with the device. The version number looks newer than 1.7.4, but it's actually a pre-release development snapshot from 3 months before 1.7.4 stable was cut. The stable release includes:
+- Fixed DNS-SD answer parsing (Matter)
+- Fixed crash by DNSSD resolving only non-LL IPv6 addresses (Matter)
+- Sped up Matter subscription resumption retries
+- Fixed Wi-Fi 6 support on Gen4 devices
+- Fixed DAKs with leading zeroes
+
+**Complication:** Cloud is disabled (`"connected": false`) for security (local-only control). The device can't check Shelly's update servers, so `Shelly.CheckForUpdate` returns `{}`.
+
+**Update options (pick one):**
+
+**Option A — Temporarily re-enable Shelly Cloud (easiest):**
+```python
+import requests
+from requests.auth import HTTPDigestAuth
+AUTH = HTTPDigestAuth('admin', 'PASSWORD')
+IP = 'SHELLY_IP'
+
+# 1. Enable cloud
+requests.post(f'http://{IP}/rpc/Cloud.SetConfig', auth=AUTH,
+              json={'config': {'enable': True}})
+
+# 2. Wait ~30 seconds for cloud to connect, then check for updates
+r = requests.get(f'http://{IP}/rpc/Shelly.CheckForUpdate', auth=AUTH)
+print(r.json())
+
+# 3. If update available, apply it
+requests.post(f'http://{IP}/rpc/Shelly.Update', auth=AUTH,
+              json={'stage': 'stable'})
+
+# 4. After device reboots with new firmware, disable cloud again
+requests.post(f'http://{IP}/rpc/Cloud.SetConfig', auth=AUTH,
+              json={'config': {'enable': False}})
 ```
 
-**Important:** Before updating, retrieve the crash dump at `/debug/core` — the update will clear it.
+**Option B — Shelly mobile app:**
+Open the Shelly app → find the device → Settings → Firmware Update. The app communicates over LAN and can trigger the update even with cloud disabled.
 
-### If Crashes Continue After Disabling Matter/BLE
-
-| Step | Action | Why |
-|------|--------|-----|
-| 1 | Update to firmware 1.7.4 stable | Includes DNSSD crash fix, WiFi 6 fix |
-| 2 | Enable debug logging via WebSocket | Stream logs to capture crash context |
-| 3 | Check core dump at `http://SHELLY_IP/debug/core` | Get stack trace from crash |
-| 4 | Set static BSSID (disable WiFi roaming) | Eliminate mesh roaming as trigger |
-| 5 | Disable 802.11r/k/v on mesh IoT SSID | These roaming protocols cause IoT instability |
-| 6 | File bug with Shelly support | Include core dump + timeline |
-
-### Debug Logging (If Needed)
-
-```bash
-# Enable debug logging
-curl -X POST "http://SHELLY_IP/rpc/Sys.SetConfig" \
-  --digest -u admin:PASSWORD \
-  -H "Content-Type: application/json" \
-  -d '{"config": {"debug": {"websocket": {"enable": true}}}}'
-
-# Stream logs in real-time
-websocat ws://SHELLY_IP/debug/log
-
-# Check for crash dumps
-curl http://SHELLY_IP/debug/core --digest -u admin:PASSWORD
+**Option C — Manual OTA URL (if we can find the firmware URL):**
 ```
+http://SHELLY_IP/ota?url=<firmware-download-url>
+```
+Firmware URLs can be found at the [Shelly Firmware Archive](http://archive.shelly-tools.de/). We need the URL for model `PlugUSG4`.
+
+**After update:**
+- Verify firmware version via `Shelly.GetDeviceInfo`
+- Check RAM free (may change with new firmware)
+- Re-disable cloud if Option A was used
+- Monitor for another 72 hours
+
+### Phase 3: WiFi Tuning (if crashes persist after Phase 2)
+
+The device has active WiFi roaming configured:
+```json
+{
+  "roam": {
+    "rssi_thr": -80,
+    "interval": 60
+  }
+}
+```
+
+This means the device checks every 60 seconds if it should switch to a different mesh AP. Roaming events can cause the ESP32 WiFi stack to hang.
+
+**Options (try in order):**
+
+**3a. Reduce roaming aggressiveness:**
+```python
+# Raise threshold so device only roams when signal is very weak
+requests.post(f'http://{IP}/rpc/WiFi.SetConfig', auth=AUTH,
+              json={'config': {'roam': {'rssi_thr': -70, 'interval': 120}}})
+```
+
+**3b. Assign static IP via DHCP reservation:**
+On your router, assign a fixed IP to MAC `58:E6:C5:36:E7:54` so the device never needs to re-negotiate DHCP during roaming.
+
+**3c. Disable 802.11r/k/v on mesh IoT SSID:**
+In your Google/Nest WiFi settings, check if fast roaming can be disabled for IoT devices. This is the most commonly cited fix for Shelly WiFi instability.
+
+**3d. Nuclear option — set static BSSID:**
+Force the device to use only one specific AP. Eliminates roaming entirely but reduces coverage if that AP goes down.
+
+### Phase 4: Escalation (if all else fails)
+
+If the device continues crashing after Phases 1-3:
+
+1. **Enable debug logging** to capture crash context:
+```python
+# Enable WebSocket debug logging
+requests.post(f'http://{IP}/rpc/Sys.SetConfig', auth=AUTH,
+              json={'config': {'debug': {'websocket': {'enable': True}}}})
+
+# Stream logs (use websocat or similar WebSocket client)
+# websocat ws://SHELLY_IP/debug/log
+```
+
+2. **Capture core dump** after next crash at `http://SHELLY_IP/debug/core`
+
+3. **File bug with Shelly support** — include:
+   - Device model: S4PL-00116US
+   - Firmware version (current at time of report)
+   - Core dump file
+   - Crash timeline with reset_reason codes
+   - Network environment (mesh WiFi, AP count)
+   - Steps already taken
+
+4. **Consider alternative firmware** (ESPHome) — last resort only. Gen4 support is experimental, and flashing requires physical UART access via a 1.27mm pitch serial header. High risk for a device protecting critical infrastructure.
+
+### Decision Tree
+
+```
+Crashes stopped after Phase 1?
+├── YES → Phase 1 fixed it. Proceed to Phase 2 for hardening.
+│         └── Still stable after Phase 2? → Done. Monitor ongoing.
+│         └── Crashes returned? → Phase 3 (WiFi tuning).
+└── NO  → Phase 2 immediately (firmware update).
+          └── Still crashing? → Phase 3 (WiFi tuning).
+                └── Still crashing? → Phase 4 (debug logging + Shelly support).
+```
+
+### What NOT to Do
+
+- **Don't flash alternative firmware** — too risky for a device protecting the sump pump. Gen4 ESPHome support is experimental, requires physical disassembly, and could brick the device.
+- **Don't re-enable Matter or BLE** — we don't use them and they consume ~65 KB of RAM.
+- **Don't rush** — test one variable at a time so we know which fix actually worked.
 
 ---
 
@@ -238,4 +352,6 @@ Plug turned back ON successfully
 
 ## Updates
 
-**2026-02-24:** Disabled Matter and BLE. RAM free improved 48%. Monitoring for 72h to confirm fix.
+**2026-02-24 (evening):** Documented full 4-phase remediation plan. Key discovery: cloud is disabled so `Shelly.CheckForUpdate` returns empty — firmware update will require temporarily re-enabling cloud or using the Shelly app. Core dump returned 404 (cleared by controlled reboot). WiFi roaming is active (`rssi_thr: -80, interval: 60`).
+
+**2026-02-24 (afternoon):** Disabled Matter and BLE. RAM free improved 48% (147 KB → 213 KB). Began Phase 1 observation. Research confirmed: firmware 1.7.99 is the factory build (2025-10-21), stable 1.7.4 (2026-01-27) includes the DNSSD crash fix. Multiple community reports of Gen4 instability, ESP32 BLE+WiFi memory contention, and WiFi mesh roaming crashes.
