@@ -289,7 +289,16 @@ home-assistant/
        'params': {'user': user, 'realm': realm, 'ha1': ha1}
    })
    ```
-3. Disable cloud connection (local control only)
+3. **Set power-on behavior to restore last state** (critical for sump pumps):
+   ```python
+   from requests.auth import HTTPDigestAuth
+   auth = HTTPDigestAuth('admin', 'YOUR_PASSWORD')
+   requests.post('http://SHELLY_IP/rpc/Switch.SetConfig', auth=auth, json={
+       'id': 0, 'config': {'initial_state': 'restore_last'}
+   })
+   ```
+   Without this, the plug defaults to OFF after any power outage — leaving your pump unprotected.
+4. Disable cloud connection (local control only)
 
 ### 2. Server
 
@@ -425,6 +434,8 @@ The current rule-based system handles the critical safety logic. The AI layer wi
 - **Temperature monitoring is a free safety net.** The smart plug already has the sensor — use it.
 - **US carriers block unregistered SMS.** Don't waste time with email-to-SMS gateways or unregistered Twilio numbers. Push notifications (ntfy.sh) are free, instant, and reliable.
 - **Local API > cloud dependency.** Your sump pump monitor should work even if the internet is down.
+- **Check `initial_state` on any smart plug controlling critical equipment.** The Shelly defaults to `"off"` after a power outage. For a sump pump, that means it silently stops protecting your basement. We discovered this when a real power blip triggered our reboot alert — the plug came back OFF and stayed that way. Set `initial_state` to `"restore_last"` immediately after setup. Our "unexpected OFF" detection caught it and auto-recovered, but without that safeguard the pump would have been offline indefinitely.
+- **Monitor your monitors.** "Smart" devices have their own bugs, defaults, and failure modes. The more automation you layer on critical infrastructure, the more you need something watching the watchers. This is exactly why an AI layer makes sense — it can catch the weird edge cases that no one writes a rule for.
 
 ## License
 
