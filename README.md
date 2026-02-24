@@ -270,7 +270,13 @@ home-assistant/
 ├── .env                   # Credentials and config (not in git)
 ├── .env.example           # Template showing required config
 ├── .gitignore             # Excludes .env, logs, notes
-└── README.md              # This file
+├── README.md              # This file
+├── images/
+│   └── dashboard-screenshot.png
+└── docs/
+    ├── ai-monitoring-design.md         # AI layer architecture options
+    ├── remote-access-cloudflare-tunnel.md  # Cloudflare Tunnel setup guide
+    └── shelly-reboot-investigation.md  # Firmware crash investigation
 ```
 
 ## Setup
@@ -424,6 +430,16 @@ graph TD
 The current rule-based system handles the critical safety logic. The AI layer will add intelligence on top — learning what "normal" looks like for this specific pump and environment, and catching subtle patterns that fixed thresholds miss.
 
 **[Read the full AI design document with three architecture options](docs/ai-monitoring-design.md)** — local Ollama, cloud API, or hybrid.
+
+## Known Issues
+
+### Shelly Plug US Gen4 Firmware Crashes ([#1](https://github.com/toddllm/home-assistant/issues/1))
+
+The plug experienced 3 watchdog/software resets in 20 hours — **not** power outages, but firmware crashes (reset_reason 3 and 4). Symptoms: plug reboots, switch goes OFF momentarily, monitor detects and auto-recovers.
+
+**Root cause:** Memory pressure from running WiFi + Matter + BLE simultaneously on the ESP32. The Shelly firmware changelog includes "Matter: Fix crash by DNSSD resolving only non-LL IPv6 addresses" — likely our bug. Disabling Matter and BLE freed 48% RAM (147 KB → 217 KB).
+
+**Status:** Monitoring after disabling Matter and BLE. See **[full investigation](docs/shelly-reboot-investigation.md)** for timeline, evidence, and next steps.
 
 ## Lessons Learned
 
