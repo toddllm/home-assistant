@@ -130,7 +130,11 @@ def get_power_status():
         "temp_c": sw.get("temperature", {}).get("tC", 0.0),
         "illumination": illum.get("illumination", "unknown"),
         "rssi": wifi.get("rssi", 0),
+        "ssid": wifi.get("ssid", "unknown"),
+        "bssid": wifi.get("bssid", "unknown"),
         "uptime": sys_info.get("uptime", 0),
+        "reset_reason": sys_info.get("reset_reason", -1),
+        "ram_free": sys_info.get("ram_free", 0),
     }
 
 
@@ -368,16 +372,38 @@ if __name__ == "__main__":
 
             # Plug rebooted detection (uptime decreased)
             uptime = status.get("uptime", 0)
+            reset_reason = status.get("reset_reason", -1)
             if last_uptime is not None and uptime < last_uptime:
-                log(f"PLUG REBOOTED: uptime reset from {last_uptime}s to {uptime}s (power outage?)")
-                send_notification(
-                    "Sump pump: plug rebooted",
-                    f"Shelly plug uptime dropped from {last_uptime}s to {uptime}s.\n\n"
-                    "This likely means a power outage occurred.\n"
-                    "The pump was without power for an unknown duration.\n"
-                    f"Current state: output={'ON' if status['output'] else 'OFF'}, "
-                    f"power={power:.1f}W, voltage={status['voltage']:.1f}V"
-                )
+                # Distinguish real reboot (uptime near zero) from counter glitch
+                if uptime < 300:
+                    # Real reboot: uptime reset to near-zero
+                    reset_names = {1: "POWERON (power loss)", 3: "SW_RESET (firmware crash)", 4: "OWDT_RESET (watchdog timeout)"}
+                    reset_name = reset_names.get(reset_reason, f"unknown ({reset_reason})")
+                    was_down_seconds = last_uptime - uptime + POLL_INTERVAL_SECONDS
+                    log(f"PLUG REBOOTED: uptime reset from {last_uptime}s to {uptime}s — reset_reason={reset_reason} ({reset_name})")
+                    send_notification(
+                        f"Sump pump: plug rebooted ({reset_name})",
+                        f"The Shelly plug rebooted.\n\n"
+                        f"RESET REASON: {reset_name}\n"
+                        f"  1 = power outage, 3 = firmware crash, 4 = watchdog timeout\n\n"
+                        f"TIMING:\n"
+                        f"  Previous uptime: {last_uptime:,}s ({last_uptime/3600:.1f}h)\n"
+                        f"  Current uptime:  {uptime}s (device was down ~{was_down_seconds}s)\n\n"
+                        f"DEVICE STATE:\n"
+                        f"  Output:   {'ON' if status['output'] else 'OFF'}\n"
+                        f"  Power:    {power:.1f}W\n"
+                        f"  Voltage:  {status['voltage']:.1f}V\n"
+                        f"  Temp:     {status['temp_c']:.1f}C\n"
+                        f"  RAM free: {status.get('ram_free', 0):,} bytes\n"
+                        f"  WiFi:     {status.get('ssid', '?')} (RSSI {status.get('rssi', '?')} dBm)\n"
+                        f"  BSSID:    {status.get('bssid', '?')}\n\n"
+                        f"ACTION: {'Monitor will turn plug ON if needed.' if not status['output'] else 'Plug is ON, monitoring continues.'}\n\n"
+                        f"If reset_reason is 3 or 4, this is a firmware crash, not a power outage.\n"
+                        f"See: https://github.com/toddllm/home-assistant/issues/1"
+                    )
+                else:
+                    # Minor uptime decrease (counter glitch, NTP adjustment, etc.)
+                    log(f"Uptime counter glitch: {last_uptime}s -> {uptime}s (delta={last_uptime - uptime}s, ignoring)")
             last_uptime = uptime
 
             # Output turned off unexpectedly
