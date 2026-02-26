@@ -48,8 +48,8 @@ load_env()
 PORT = int(os.environ.get("AI_ANALYZER_PORT", "8078"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 AI_MODEL = os.environ.get("AI_MODEL", "qwen3:32b-q4_K_M")
-WEATHER_LAT = os.environ.get("WEATHER_LAT", "42.938")
-WEATHER_LON = os.environ.get("WEATHER_LON", "-74.1853")
+WEATHER_LAT = os.environ.get("WEATHER_LAT", "42.942")
+WEATHER_LON = os.environ.get("WEATHER_LON", "-74.282")
 
 DB_PATH = Path(__file__).parent / "ai_analyzer.db"
 ANALYSIS_INTERVAL = int(os.environ.get("ANALYSIS_INTERVAL", "300"))    # 5 min
@@ -59,8 +59,11 @@ NWS_INTERVAL = int(os.environ.get("NWS_INTERVAL", "900"))             # 15 min
 FORECAST_INTERVAL = int(os.environ.get("FORECAST_INTERVAL", "21600")) # 6 hours
 CORRELATION_INTERVAL = int(os.environ.get("CORRELATION_INTERVAL", "86400"))  # daily
 
-# USGS stream gauge — Schoharie Creek at Burtonsville NY (~10mi, same watershed)
-USGS_SITE_ID = os.environ.get("USGS_SITE_ID", "01351500")
+# USGS stream gauges — Fort Hunter is at the confluence of Schoharie Creek and Mohawk River
+# 01349527 = Mohawk River at Fonda (~4.5mi upstream of confluence)
+# 01354083 = Mohawk River at Amsterdam (~4.5mi downstream of confluence)
+# 01351500 = Schoharie Creek at Burtonsville (~10mi upstream on creek)
+USGS_SITE_IDS = os.environ.get("USGS_SITE_IDS", "01349527,01354083,01351500")
 
 # Data retention (days)
 RETENTION_READINGS = int(os.environ.get("RETENTION_READINGS", "30"))
@@ -260,22 +263,44 @@ def get_latest_weather(conn):
         return dict(row)
     return None
 
-def get_latest_stream(conn):
-    """Get the most recent stream gauge entry."""
-    row = conn.execute(
-        "SELECT * FROM stream_gauge ORDER BY ts DESC LIMIT 1"
-    ).fetchone()
+def get_latest_stream(conn, site_id=None):
+    """Get the most recent stream gauge entry, optionally filtered by site."""
+    if site_id:
+        row = conn.execute(
+            "SELECT * FROM stream_gauge WHERE site_id = ? ORDER BY ts DESC LIMIT 1",
+            (site_id,)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM stream_gauge ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
     if row:
         return dict(row)
     return None
 
-def get_stream_trend(conn, hours=6):
+def get_all_latest_streams(conn):
+    """Get the most recent reading from each stream gauge site."""
+    sites = {}
+    for site_id in USGS_SITE_IDS.split(","):
+        site_id = site_id.strip()
+        row = get_latest_stream(conn, site_id)
+        if row:
+            sites[site_id] = row
+    return sites
+
+def get_stream_trend(conn, site_id=None, hours=6):
     """Get stream gauge height trend over N hours."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
-    rows = conn.execute(
-        "SELECT gauge_height_ft FROM stream_gauge WHERE ts >= ? ORDER BY ts",
-        (cutoff,)
-    ).fetchall()
+    if site_id:
+        rows = conn.execute(
+            "SELECT gauge_height_ft FROM stream_gauge WHERE site_id = ? AND ts >= ? ORDER BY ts",
+            (site_id, cutoff)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT gauge_height_ft FROM stream_gauge WHERE ts >= ? ORDER BY ts",
+            (cutoff,)
+        ).fetchall()
     if len(rows) < 2:
         return "insufficient data"
     heights = [r["gauge_height_ft"] for r in rows if r["gauge_height_ft"] is not None]
@@ -287,6 +312,13 @@ def get_stream_trend(conn, hours=6):
     elif diff < -0.5:
         return f"falling ({diff:.1f}ft/{hours}h)"
     return "stable"
+
+# USGS site name mapping for readable output
+USGS_SITE_NAMES = {
+    "01349527": "Mohawk@Fonda",
+    "01354083": "Mohawk@Amsterdam",
+    "01351500": "Schoharie@Burtonsville",
+}
 
 def get_active_alerts(conn):
     """Get currently active NWS alerts."""
@@ -362,7 +394,7 @@ def build_prompt(conn):
     stats_1h = query_stats(conn, 1)
     stats_24h = query_stats(conn, 24)
     weather = get_latest_weather(conn)
-    stream = get_latest_stream(conn)
+    streams = get_all_latest_streams(conn)
     alerts = get_active_alerts(conn)
     forecast = get_forecast_summary(conn)
     snow_melt_rate = get_snow_melt_rate(conn)
@@ -451,16 +483,18 @@ WEATHER: {temp}C outdoor | {precip}mm precip | {rain}mm rain | {prob}% 6h rain p
             )
         )
 
-    # Stream gauge (Epic 1.3 / Epic 6.2)
-    if stream:
-        trend = get_stream_trend(conn)
-        parts.append(
-            "STREAM: Schoharie Creek {discharge}cfs | gauge {height}ft | {trend}".format(
-                discharge=stream.get("discharge_cfs", "?"),
-                height=stream.get("gauge_height_ft", "?"),
-                trend=trend,
-            )
-        )
+    # Stream gauges — Fort Hunter is at the Schoharie Creek / Mohawk River confluence
+    if streams:
+        stream_parts = []
+        for sid, s in streams.items():
+            name = USGS_SITE_NAMES.get(sid, sid)
+            h = s.get("gauge_height_ft")
+            if h is not None:
+                trend = get_stream_trend(conn, sid)
+                stream_parts.append(f"{name} {h}ft ({trend})")
+        if stream_parts:
+            parts.append("STREAMS: " + " | ".join(stream_parts))
+            parts.append("NOTE: Property is at Schoharie-Mohawk confluence. Both waterways affect water table.")
 
     # Forecast lookahead (Epic 1.5 / Epic 6.4)
     if forecast:
@@ -619,11 +653,13 @@ def fetch_weather():
 def fetch_usgs_stream():
     """Fetch stream gauge data from USGS Water Services (free, no API key).
 
+    Fetches from multiple sites (Mohawk River upstream/downstream + Schoharie Creek).
     Handles USGS sentinel value -999999 (ice-affected/unavailable) by storing None.
     """
+    sites = USGS_SITE_IDS.replace(" ", "")
     url = (
         f"https://waterservices.usgs.gov/nwis/iv/"
-        f"?sites={USGS_SITE_ID}&parameterCd=00060,00065"
+        f"?sites={sites}&parameterCd=00060,00065"
         f"&period=PT2H&format=json"
     )
     try:
@@ -634,38 +670,55 @@ def fetch_usgs_stream():
         log(f"USGS stream fetch failed: {e}")
         return
 
-    discharge = None
-    gauge_height = None
-
+    # Group readings by site
+    site_data = {}
     for ts in data.get("value", {}).get("timeSeries", []):
+        site_id = ts.get("sourceInfo", {}).get("siteCode", [{}])[0].get("value", "")
         param = ts.get("variable", {}).get("variableCode", [{}])[0].get("value", "")
         values = ts.get("values", [{}])[0].get("value", [])
-        if values:
-            latest_val = values[-1].get("value")
-            try:
-                val = float(latest_val)
-            except (TypeError, ValueError):
-                continue
-            # USGS uses -999999 as sentinel for unavailable/ice-affected
-            if val <= -999999:
-                val = None
-            if param == "00060":  # Discharge (cfs)
-                discharge = val
-            elif param == "00065":  # Gauge height (ft)
-                gauge_height = val
+        if not values:
+            continue
 
-    if discharge is None and gauge_height is None:
-        log(f"Stream gauge: no valid data from site {USGS_SITE_ID} (may be ice-affected)")
-        # Still store the row so we know the fetch happened
+        latest_val = values[-1].get("value")
+        try:
+            val = float(latest_val)
+        except (TypeError, ValueError):
+            continue
+        # USGS uses -999999 as sentinel for unavailable/ice-affected
+        if val <= -999999:
+            val = None
+
+        if site_id not in site_data:
+            site_data[site_id] = {"discharge": None, "gauge_height": None}
+        if param == "00060":
+            site_data[site_id]["discharge"] = val
+        elif param == "00065":
+            site_data[site_id]["gauge_height"] = val
 
     conn = get_db()
     try:
-        conn.execute(
-            "INSERT INTO stream_gauge (site_id, discharge_cfs, gauge_height_ft) VALUES (?, ?, ?)",
-            (USGS_SITE_ID, discharge, gauge_height),
-        )
+        stored = 0
+        for site_id, readings in site_data.items():
+            conn.execute(
+                "INSERT INTO stream_gauge (site_id, discharge_cfs, gauge_height_ft) VALUES (?, ?, ?)",
+                (site_id, readings["discharge"], readings["gauge_height"]),
+            )
+            stored += 1
+
+        # If no data at all (sites inactive), store a null row for the primary site
+        if not site_data:
+            primary = sites.split(",")[0]
+            conn.execute(
+                "INSERT INTO stream_gauge (site_id, discharge_cfs, gauge_height_ft) VALUES (?, ?, ?)",
+                (primary, None, None),
+            )
+            stored = 1
+
         conn.commit()
-        log(f"Stream gauge stored: discharge={discharge}cfs, height={gauge_height}ft")
+        parts = []
+        for sid, r in site_data.items():
+            parts.append(f"{sid}: {r['gauge_height']}ft")
+        log(f"Stream gauges stored ({stored} sites): {', '.join(parts) if parts else 'no valid data'}")
     finally:
         conn.close()
 
@@ -782,14 +835,23 @@ def compute_weather_risk(conn=None):
         conn = get_db()
     try:
         weather = get_latest_weather(conn)
-        stream = get_latest_stream(conn)
+        streams = get_all_latest_streams(conn)
         alerts = get_active_alerts(conn)
         snow_melt = get_snow_melt_rate(conn)
 
         soil = (weather or {}).get("soil_moisture_28_100")
         precip_prob = (weather or {}).get("precip_prob_6h", 0) or 0
         precip_rate = (weather or {}).get("precipitation", 0) or 0
-        gauge = (stream or {}).get("gauge_height_ft")
+
+        # Use the highest gauge reading across all sites (worst case for water table)
+        gauge_heights = {
+            sid: s.get("gauge_height_ft")
+            for sid, s in streams.items()
+            if s.get("gauge_height_ft") is not None
+        }
+        max_gauge = max(gauge_heights.values()) if gauge_heights else None
+        max_gauge_site = max(gauge_heights, key=gauge_heights.get) if gauge_heights else None
+
         flood_alert = any(
             a.get("event", "").lower() in (
                 "flood warning", "flood watch",
@@ -798,25 +860,31 @@ def compute_weather_risk(conn=None):
             for a in alerts
         )
 
-        # Baseline and flood stage for Schoharie Creek (estimates)
-        baseline_ft = 2.0
-        flood_stage_ft = 10.0
+        # Mohawk River baseline ~10ft, flood stage ~16ft (Amsterdam gauge)
+        # Schoharie Creek baseline ~2ft, flood stage ~10ft
+        # Use Mohawk scale since those gauges read higher
+        baseline_ft = 10.0
+        flood_stage_ft = 16.0
 
         risk = (
-            0.30 * _normalize(soil, 0.15, 0.45) +
-            0.15 * (precip_prob / 100.0) +
-            0.15 * _normalize(precip_rate, 0, 20) +
-            0.20 * _normalize(gauge, baseline_ft, flood_stage_ft) +
+            0.25 * _normalize(soil, 0.15, 0.45) +
+            0.10 * (precip_prob / 100.0) +
+            0.10 * _normalize(precip_rate, 0, 20) +
+            0.25 * _normalize(max_gauge, baseline_ft, flood_stage_ft) +
             0.10 * _normalize(snow_melt, 0, 30) +
-            0.10 * (1.0 if flood_alert else 0.0)
+            0.10 * (1.0 if flood_alert else 0.0) +
+            0.10 * (1.0 if len(gauge_heights) >= 2 and
+                     all(h > baseline_ft + 2 for h in gauge_heights.values())
+                     else 0.0)  # Both waterways elevated = compounding risk
         )
 
         factors = []
         if soil is not None:
             factors.append(f"soil={soil:.2f}")
         factors.append(f"precip_prob={precip_prob:.0f}%")
-        if gauge is not None:
-            factors.append(f"gauge={gauge:.1f}ft")
+        for sid, h in gauge_heights.items():
+            name = USGS_SITE_NAMES.get(sid, sid)
+            factors.append(f"{name}={h:.1f}ft")
         if snow_melt > 0:
             factors.append(f"melt={snow_melt}mm/d")
         if flood_alert:
@@ -1049,7 +1117,7 @@ def evaluate_hypotheses():
         stats_1h = query_stats(conn, 1)
         stats_24h = query_stats(conn, 24)
         weather = get_latest_weather(conn)
-        stream = get_latest_stream(conn)
+        streams = get_all_latest_streams(conn)
         snow_melt = get_snow_melt_rate(conn)
 
         # 48h cumulative precipitation
@@ -1084,8 +1152,11 @@ def evaluate_hypotheses():
                             has_evidence = True
                             support = False
 
-            elif metric == "gauge_height_ft" and stream:
-                gauge = stream.get("gauge_height_ft")
+            elif metric == "gauge_height_ft" and streams:
+                # Use max gauge height across all sites
+                gauges = [s.get("gauge_height_ft") for s in streams.values()
+                          if s.get("gauge_height_ft") is not None]
+                gauge = max(gauges) if gauges else None
                 if gauge is not None and gauge > threshold:
                     has_evidence = True
                     support = cycle_rate > 4
@@ -1338,14 +1409,18 @@ def insights():
                 "fetched_at": weather.get("ts"),
             }
 
-        stream = get_latest_stream(conn)
-        if stream:
-            result["stream"] = {
-                "discharge_cfs": stream.get("discharge_cfs"),
-                "gauge_height_ft": stream.get("gauge_height_ft"),
-                "trend": get_stream_trend(conn),
-                "fetched_at": stream.get("ts"),
-            }
+        all_streams = get_all_latest_streams(conn)
+        if all_streams:
+            result["streams"] = {}
+            for sid, s in all_streams.items():
+                name = USGS_SITE_NAMES.get(sid, sid)
+                result["streams"][name] = {
+                    "site_id": sid,
+                    "discharge_cfs": s.get("discharge_cfs"),
+                    "gauge_height_ft": s.get("gauge_height_ft"),
+                    "trend": get_stream_trend(conn, sid),
+                    "fetched_at": s.get("ts"),
+                }
 
         result["weather_risk"] = compute_weather_risk(conn)
 
@@ -1472,7 +1547,7 @@ if __name__ == "__main__":
     log(f"Port: {PORT}")
     log(f"Ollama: {OLLAMA_URL} (model: {AI_MODEL})")
     log(f"Weather: lat={WEATHER_LAT}, lon={WEATHER_LON}")
-    log(f"USGS Stream Gauge: site {USGS_SITE_ID}")
+    log(f"USGS Stream Gauges: {USGS_SITE_IDS}")
     log(f"Database: {DB_PATH}")
     log(f"Intervals: analysis={ANALYSIS_INTERVAL}s, weather={WEATHER_INTERVAL}s, "
         f"stream={STREAM_INTERVAL}s, nws={NWS_INTERVAL}s, forecast={FORECAST_INTERVAL}s")
