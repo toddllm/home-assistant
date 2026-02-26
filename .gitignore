@@ -2,4 +2,10 @@
 *.log
 __pycache__/
 snapshot.json
+ai_analyzer.db
+ai_analyzer.db-shm
+ai_analyzer.db-wal
 sump-pump-setup-notes.md
+.claude/settings.json
+*.eml
+to-research/

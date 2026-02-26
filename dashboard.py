@@ -29,6 +29,7 @@ def load_env():
 load_env()
 
 SHELLY_IP = os.environ["SHELLY_IP"]
+AI_ANALYZER_URL = os.environ.get("AI_ANALYZER_URL", "")
 AUTH = HTTPDigestAuth(
     os.environ["SHELLY_USER"],
     os.environ["SHELLY_PASSWORD"],
@@ -90,6 +91,14 @@ h1 { font-size: 1.3rem; margin-bottom: 16px; color: #94a3b8; }
   <div class="status-row"><span class="label">Uptime</span><span class="value" id="uptime">--</span></div>
   <div class="status-row"><span class="label">Monitor</span><span class="value" id="monitor">--</span></div>
 </div>
+<div class="card" id="ai-card" style="display:none;">
+  <div class="status-row"><span class="label">AI Analysis</span><span class="value" id="ai-status">--</span></div>
+  <div class="status-row"><span class="label">Recommendation</span><span class="value" id="ai-rec" style="font-size:0.85rem;font-weight:400;">--</span></div>
+  <div class="status-row"><span class="label">Weather</span><span class="value" id="ai-weather" style="font-size:0.85rem;">--</span></div>
+  <div class="status-row"><span class="label">Confidence</span><span class="value" id="ai-confidence">--</span></div>
+  <div class="status-row"><span class="label">Last Analysis</span><span class="value" id="ai-time" style="font-size:0.8rem;color:#64748b;">--</span></div>
+  <div style="text-align:center;padding-top:8px;"><button class="btn btn-refresh" style="grid-column:unset;padding:8px 16px;font-size:0.85rem;" onclick="fetch('/api/ai-analyze',{method:'POST'});this.textContent='Analyzing...';setTimeout(()=>{this.textContent='Analyze Now';refresh();},20000);">Analyze Now</button></div>
+</div>
 <div class="buttons">
   <button class="btn btn-on" onclick="action('on')">Turn ON</button>
   <button class="btn btn-off" onclick="action('off')">Turn OFF</button>
@@ -135,6 +144,24 @@ async function refresh() {
     const lr = await fetch('/api/logs');
     const ld = await lr.json();
     document.getElementById('log').textContent = ld.logs;
+  } catch(e) {}
+  try {
+    const ar = await fetch('/api/ai-insights');
+    const ai = await ar.json();
+    var ac = document.getElementById('ai-card');
+    if (ai.status && ai.status !== 'pending') {
+      ac.style.display = '';
+      var sb = ai.status === 'normal' ? 'badge-ok' : ai.status === 'watch' ? 'badge-warn' : 'badge-err';
+      document.getElementById('ai-status').innerHTML = '<span class="badge ' + sb + '">' + ai.status + '</span>';
+      document.getElementById('ai-rec').textContent = ai.recommendation || 'None';
+      document.getElementById('ai-confidence').textContent = ai.confidence != null ? (ai.confidence * 100).toFixed(0) + '%' : '--';
+      document.getElementById('ai-time').textContent = ai.analyzed_at || '--';
+      if (ai.weather) {
+        document.getElementById('ai-weather').textContent = ai.weather.temp_c + '\u00b0C, ' + (ai.weather.rain || 0) + 'mm rain, ' + (ai.weather.precip_prob_6h || 0) + '% 6h prob';
+      } else {
+        document.getElementById('ai-weather').textContent = 'No data';
+      }
+    }
   } catch(e) {}
 }
 
@@ -240,6 +267,28 @@ def api_off():
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)})
+
+
+@app.route("/api/ai-insights")
+def api_ai_insights():
+    if not AI_ANALYZER_URL:
+        return jsonify({"status": "disabled", "message": "AI analyzer not configured"})
+    try:
+        r = requests.get(f"{AI_ANALYZER_URL}/api/insights", timeout=3)
+        return jsonify(r.json())
+    except Exception:
+        return jsonify({"status": "unavailable", "message": "AI analyzer unreachable"})
+
+
+@app.route("/api/ai-analyze", methods=["POST"])
+def api_ai_analyze():
+    if not AI_ANALYZER_URL:
+        return jsonify({"status": "disabled"})
+    try:
+        r = requests.post(f"{AI_ANALYZER_URL}/api/analyze", timeout=3)
+        return jsonify(r.json())
+    except Exception:
+        return jsonify({"status": "unavailable"})
 
 
 @app.route("/api/cycle", methods=["POST"])

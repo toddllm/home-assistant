@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sump.ai-analyzer</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/bin/python3</string>
+        <string>/Users/tdeshane/home-assistant/ai_analyzer.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/tdeshane/home-assistant/ai_analyzer.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/tdeshane/home-assistant/ai_analyzer.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/tdeshane/home-assistant</string>
+</dict>
+</plist>

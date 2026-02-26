@@ -81,6 +81,10 @@ PUMP_POWER_HIGH = float(os.environ.get("PUMP_POWER_HIGH", "700.0"))
 # No-run alert: hours without pump running before alerting
 NO_RUN_ALERT_HOURS = float(os.environ.get("NO_RUN_ALERT_HOURS", "24"))
 
+# AI Analyzer (optional — runs on Mac with Ollama)
+AI_ENABLED = os.environ.get("AI_ENABLED", "false").lower() == "true"
+AI_ANALYZER_URL = os.environ.get("AI_ANALYZER_URL", "http://localhost:8078")
+
 # Notification config
 GMAIL_USER = os.environ["GMAIL_USER"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
@@ -218,6 +222,20 @@ def send_notification(subject, body):
         log(f"ERROR: Failed to send ntfy alert: {e}")
 
 
+def ship_to_analyzer(reading):
+    """Fire-and-forget: send telemetry to AI analyzer. Silent on failure."""
+    if not AI_ENABLED:
+        return
+    try:
+        requests.post(
+            f"{AI_ANALYZER_URL}/ingest",
+            json=reading,
+            timeout=2,
+        )
+    except Exception:
+        pass
+
+
 def run_safe_mode():
     """
     Duty cycle to protect pump while still clearing water.
@@ -318,6 +336,7 @@ if __name__ == "__main__":
     log(f"WiFi RSSI warning: {RSSI_WARN} dBm")
     log(f"No-run alert after: {NO_RUN_ALERT_HOURS}h")
     log(f"Poll interval: {POLL_INTERVAL_SECONDS}s")
+    log(f"AI analyzer: {'enabled -> ' + AI_ANALYZER_URL if AI_ENABLED else 'disabled'}")
 
     # Make sure plug is on
     status = get_power_status()
@@ -345,6 +364,9 @@ if __name__ == "__main__":
                 log("WARNING: Could not reach Shelly, retrying next cycle")
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
+
+            # Ship telemetry to AI analyzer (fire-and-forget)
+            ship_to_analyzer(status)
 
             # Temperature safety always active
             if check_temp_safety(status):
