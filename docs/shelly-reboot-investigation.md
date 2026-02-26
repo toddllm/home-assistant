@@ -352,6 +352,8 @@ Plug turned back ON successfully
 
 ## Updates
 
+**2026-02-25 (afternoon) — Phase 1 checkpoint (28.5h):** No crashes since disabling Matter + BLE. Uptime steady at 102,613s (28.5h). RAM free holding at 217,004 bytes (vs 147K before fix). RAM min watermark is 173,924 bytes — healthy. Reset reason 3 is from the controlled reboot on Feb 24, not a new crash. The 19:32 event on Feb 24 was a counter glitch (uptime 14227→13183), not an actual reboot — the improved monitor code now distinguishes these. Phase 1 observation continues through ~2026-02-27 15:35 EST (~43.5h remaining). Early signs are very positive.
+
 **2026-02-24 (evening):** Documented full 4-phase remediation plan. Key discovery: cloud is disabled so `Shelly.CheckForUpdate` returns empty — firmware update will require temporarily re-enabling cloud or using the Shelly app. Core dump returned 404 (cleared by controlled reboot). WiFi roaming is active (`rssi_thr: -80, interval: 60`).
 
 **2026-02-24 (afternoon):** Disabled Matter and BLE. RAM free improved 48% (147 KB → 213 KB). Began Phase 1 observation. Research confirmed: firmware 1.7.99 is the factory build (2025-10-21), stable 1.7.4 (2026-01-27) includes the DNSSD crash fix. Multiple community reports of Gen4 instability, ESP32 BLE+WiFi memory contention, and WiFi mesh roaming crashes.

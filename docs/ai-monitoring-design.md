@@ -236,6 +236,10 @@ Linux (toddllm)                      Mac (M3 Max)
 
 **Start with Option B** (cloud API). It's the simplest, requires no new services, and gives you the smartest models for pennies/day. The data being sent (watts, volts, temperature) has zero privacy sensitivity. If you later want local fallback, it's easy to layer Option A on top — the prompt engineering and analysis logic transfer directly, making it a natural path to Option C.
 
+## Decision (2026-02-25)
+
+**Built Option A** (local Ollama on Mac) as a POC. Chose local-first to avoid cloud dependencies and prove the concept with zero cost. The `qwen3:32b-q4_K_M` model on M3 Max performs well (5-18s per analysis) with compact, rules-first prompts. See [ai-analyzer-poc.md](ai-analyzer-poc.md) for full results.
+
 ## Prompt Engineering (Shared Across All Options)
 
 The quality of AI analysis depends heavily on the prompt. Here's the planned structure:
