@@ -3,7 +3,7 @@
 **Device:** Shelly Plug US Gen4 (S4PL-00116US)
 **Firmware:** 1.7.99-plugusg4prod1 (factory build, 2025-10-21)
 **GitHub Issue:** [#1](https://github.com/toddllm/home-assistant/issues/1)
-**Status:** Phase 1 — observing stability after disabling Matter + BLE
+**Status:** Phase 1 CONCLUDED — Matter/BLE not root cause. Proceeding to Phase 2 (firmware update).
 
 ---
 
@@ -18,6 +18,7 @@ The Shelly Plug US Gen4 controlling the sump pump rebooted 3 times in ~20 hours.
 | 1 | 2026-02-23 ~20:14 | ~49,460s (~13.7h) | 4 (OWDT_RESET) | Watchdog timeout |
 | 2 | 2026-02-24 ~07:31 | ~40,620s (~11.3h) | 3 (SW_RESET) | Software reset |
 | 3 | 2026-02-24 ~15:24 | ~28,380s (~7.9h) | 4 (OWDT_RESET) | Watchdog timeout |
+| 4 | 2026-02-26 ~17:51 | ~145,551s (~40.4h) | 4 (OWDT_RESET) | **Phase 1 crash** — Matter+BLE disabled |
 
 ### Reset Reason Codes (ESP32)
 
@@ -319,6 +320,15 @@ WARNING: Plug output is OFF unexpectedly! Turning back ON.
 Plug turned back ON successfully
 ```
 
+### Reboot #4 — 2026-02-26 ~17:51 (during Phase 1)
+```
+[2026-02-26 16:37:40] Uptime counter glitch: 175493s -> 141163s (delta=34330s, ignoring)
+[2026-02-26 17:51:28] ERROR: Shelly RPC 'Shelly.GetStatus' failed: Read timed out. (read timeout=10)
+[2026-02-26 17:51:28] WARNING: Could not reach Shelly, retrying next cycle
+[2026-02-26 17:51:58] PLUG REBOOTED: uptime reset from 145551s to 37s — reset_reason=4 (OWDT_RESET)
+```
+**Notable:** An uptime counter glitch (34,330s backward jump) occurred 75 minutes before the crash. This may indicate the firmware was already in a degraded state before the watchdog fired. Plug came back ON (initial_state: restore_last working correctly). RAM free after reboot: 214,468 bytes (consistent with Matter+BLE still disabled).
+
 ---
 
 ## References
@@ -351,6 +361,24 @@ Plug turned back ON successfully
 ---
 
 ## Updates
+
+**2026-02-27 — Phase 1 CONCLUDED. Proceeding to Phase 2.**
+
+Phase 1 result: Crash #4 occurred at 2026-02-26 17:51 after 40.4 hours of uptime. Matter and BLE were disabled. This means:
+- Disabling Matter + BLE **improved** stability (40h vs previous 7-13h between crashes) but **did not eliminate** the problem
+- The root cause is in firmware 1.7.99 itself, not just memory pressure from wireless stacks
+- An uptime counter glitch (34,330s backward jump at 16:37) preceded the crash by 75 minutes, suggesting progressive firmware degradation before the watchdog fired
+
+**Decision: Proceed immediately to Phase 2 (firmware update to stable 1.7.4).** Rationale:
+1. Spring melt season is 4-6 weeks away — pump activity will increase significantly
+2. Each crash creates a 30-60s monitoring blind spot; the risk of a crash coinciding with a stuck-float event increases with pump cycle frequency
+3. The firmware update risk (brief cloud re-enable, ~5 min downtime) is small compared to running unstable firmware through spring
+4. Stable 1.7.4 includes the DNSSD crash fix, DNS-SD parsing fix, and Wi-Fi 6 Gen4 fix — all relevant
+
+Also deployed today:
+- AI analyzer telemetry enabled on Linux monitor (toddllm)
+- First real AI analysis completed at 05:29 UTC
+- Three USGS stream gauges now feeding data (Mohawk@Fonda, Mohawk@Amsterdam, Schoharie@Burtonsville)
 
 **2026-02-25 (afternoon) — Phase 1 checkpoint (28.5h):** No crashes since disabling Matter + BLE. Uptime steady at 102,613s (28.5h). RAM free holding at 217,004 bytes (vs 147K before fix). RAM min watermark is 173,924 bytes — healthy. Reset reason 3 is from the controlled reboot on Feb 24, not a new crash. The 19:32 event on Feb 24 was a counter glitch (uptime 14227→13183), not an actual reboot — the improved monitor code now distinguishes these. Phase 1 observation continues through ~2026-02-27 15:35 EST (~43.5h remaining). Early signs are very positive.
 
