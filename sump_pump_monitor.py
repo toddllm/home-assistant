@@ -109,12 +109,13 @@ def shelly_rpc(method, params=None):
         url += f"?{query}"
     try:
         result = subprocess.run(
-            ["curl", "-s", "-u", f"{SHELLY_USER}:{SHELLY_PASSWORD}",
+            ["curl", "-s", "-f", "-u", f"{SHELLY_USER}:{SHELLY_PASSWORD}",
              "--digest", "--connect-timeout", "5", "--max-time", "10", url],
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode != 0 or not result.stdout.strip():
-            log(f"ERROR: Shelly RPC '{method}' failed: curl returned {result.returncode}")
+            err = result.stderr.strip() or f"exit code {result.returncode}"
+            log(f"ERROR: Shelly RPC '{method}' failed: {err}")
             return None
         return json.loads(result.stdout)
     except Exception as e:
