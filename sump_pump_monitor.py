@@ -17,6 +17,7 @@ import os
 import time
 import smtplib
 import signal
+import subprocess
 import sys
 import urllib.request
 from email.mime.text import MIMEText
@@ -24,7 +25,6 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
-from requests.auth import HTTPDigestAuth
 
 
 def load_env():
@@ -47,7 +47,7 @@ load_env()
 SHELLY_IP = os.environ["SHELLY_IP"]
 SHELLY_USER = os.environ["SHELLY_USER"]
 SHELLY_PASSWORD = os.environ["SHELLY_PASSWORD"]
-SHELLY_AUTH = HTTPDigestAuth(SHELLY_USER, SHELLY_PASSWORD)
+
 
 # Thresholds
 POWER_THRESHOLD_WATTS = float(os.environ.get("POWER_THRESHOLD_WATTS", "100.0"))
@@ -102,15 +102,21 @@ def log(msg):
 
 
 def shelly_rpc(method, params=None):
-    """Call a Shelly RPC method via HTTP with digest auth."""
+    """Call a Shelly RPC method via HTTP with digest auth (uses curl for SHA-256 support)."""
     url = f"http://{SHELLY_IP}/rpc/{method}"
     if params:
         query = "&".join(f"{k}={v}" for k, v in params.items())
         url += f"?{query}"
     try:
-        resp = requests.get(url, auth=SHELLY_AUTH, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        result = subprocess.run(
+            ["curl", "-s", "-u", f"{SHELLY_USER}:{SHELLY_PASSWORD}",
+             "--digest", "--connect-timeout", "5", "--max-time", "10", url],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            log(f"ERROR: Shelly RPC '{method}' failed: curl returned {result.returncode}")
+            return None
+        return json.loads(result.stdout)
     except Exception as e:
         log(f"ERROR: Shelly RPC '{method}' failed: {e}")
         return None
