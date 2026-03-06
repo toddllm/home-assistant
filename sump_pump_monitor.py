@@ -88,7 +88,7 @@ AI_ANALYZER_URL = os.environ.get("AI_ANALYZER_URL", "http://localhost:8078")
 # Notification config
 GMAIL_USER = os.environ["GMAIL_USER"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
-NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", GMAIL_USER)
+NOTIFY_EMAILS = [e.strip() for e in os.environ.get("NOTIFY_EMAIL", GMAIL_USER).split(",") if e.strip()]
 NTFY_TOPIC = os.environ["NTFY_TOPIC"]
 
 # Modes
@@ -195,17 +195,17 @@ def power_cycle():
 
 def send_notification(subject, body):
     """Send email and ntfy push notifications."""
-    # Email
+    # Email (supports multiple comma-separated recipients)
     try:
         msg = MIMEText(body)
         msg["Subject"] = subject
         msg["From"] = GMAIL_USER
-        msg["To"] = NOTIFY_EMAIL
+        msg["To"] = ", ".join(NOTIFY_EMAILS)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
             server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_USER, NOTIFY_EMAIL, msg.as_string())
-        log(f"Alert sent via email to {NOTIFY_EMAIL}")
+            server.sendmail(GMAIL_USER, NOTIFY_EMAILS, msg.as_string())
+        log(f"Alert sent via email to {', '.join(NOTIFY_EMAILS)}")
     except Exception as e:
         log(f"ERROR: Failed to send email alert: {e}")
 
@@ -399,7 +399,11 @@ if __name__ == "__main__":
                 # Distinguish real reboot (uptime near zero) from counter glitch
                 if uptime < 300:
                     # Real reboot: uptime reset to near-zero
-                    reset_names = {1: "POWERON (power loss)", 3: "SW_RESET (firmware crash)", 4: "OWDT_RESET (watchdog timeout)"}
+                    reset_names = {
+                        1: "POWERON (power-on)", 3: "SW_RESET (software/panic restart)",
+                        4: "PANIC (CPU exception)", 5: "INT_WDT (interrupt watchdog)",
+                        6: "TASK_WDT (task watchdog)", 9: "BROWNOUT (voltage drop)",
+                    }
                     reset_name = reset_names.get(reset_reason, f"unknown ({reset_reason})")
                     was_down_seconds = last_uptime - uptime + POLL_INTERVAL_SECONDS
                     log(f"PLUG REBOOTED: uptime reset from {last_uptime}s to {uptime}s — reset_reason={reset_reason} ({reset_name})")
@@ -407,7 +411,8 @@ if __name__ == "__main__":
                         f"Sump pump: plug rebooted ({reset_name})",
                         f"The Shelly plug rebooted.\n\n"
                         f"RESET REASON: {reset_name}\n"
-                        f"  1 = power outage, 3 = firmware crash, 4 = watchdog timeout\n\n"
+                        f"  1 = power-on, 3 = software/panic restart, 4 = CPU exception\n"
+                        f"  5 = interrupt watchdog, 6 = task watchdog, 9 = brownout\n\n"
                         f"TIMING:\n"
                         f"  Previous uptime: {last_uptime:,}s ({last_uptime/3600:.1f}h)\n"
                         f"  Current uptime:  {uptime}s (device was down ~{was_down_seconds}s)\n\n"
@@ -423,9 +428,14 @@ if __name__ == "__main__":
                         f"If reset_reason is 3 or 4, this is a firmware crash, not a power outage.\n"
                         f"See: https://github.com/toddllm/home-assistant/issues/1"
                     )
+                    # Post-reboot: if pump is already running, start stuck-float timer immediately
+                    if pump_running and running_since is None:
+                        running_since = time.time()
+                        log(f"Post-reboot: pump already running ({power:.1f}W), starting stuck-float timer immediately")
                 else:
                     # Minor uptime decrease (counter glitch, NTP adjustment, etc.)
                     log(f"Uptime counter glitch: {last_uptime}s -> {uptime}s (delta={last_uptime - uptime}s, ignoring)")
+
             last_uptime = uptime
 
             # Output turned off unexpectedly

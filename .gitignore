@@ -7,5 +7,6 @@ ai_analyzer.db-shm
 ai_analyzer.db-wal
 sump-pump-setup-notes.md
 .claude/settings.json
+.mcp.json
 *.eml
 to-research/
