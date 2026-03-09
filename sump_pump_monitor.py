@@ -63,6 +63,17 @@ SAFE_RUN_SECONDS = int(os.environ.get("SAFE_RUN_SECONDS", "120"))
 SAFE_REST_SECONDS = int(os.environ.get("SAFE_REST_SECONDS", "600"))
 SAFE_UPDATE_INTERVAL = 3
 
+# Conservative mode: plug OFF by default, brief ON pulses, no auto-exit
+CONSERVATIVE_MODE = os.environ.get("CONSERVATIVE_MODE", "false").lower() == "true"
+CONSERVATIVE_RUN_SECONDS = int(os.environ.get("CONSERVATIVE_RUN_SECONDS", "30"))
+CONSERVATIVE_REST_SECONDS = int(os.environ.get("CONSERVATIVE_REST_SECONDS", "7200"))
+
+# Spring mode: plug OFF by default, regular ON pulses to clear water
+# Auto-exits to NORMAL if pump draws no power during a pulse (water table low)
+SPRING_MODE = os.environ.get("SPRING_MODE", "false").lower() == "true"
+SPRING_RUN_SECONDS = int(os.environ.get("SPRING_RUN_SECONDS", "60"))
+SPRING_REST_SECONDS = int(os.environ.get("SPRING_REST_SECONDS", "1800"))
+
 # Temperature safety
 MAX_TEMP_C = float(os.environ.get("MAX_TEMP_C", "60.0"))
 TEMP_WARN_C = float(os.environ.get("TEMP_WARN_C", "50.0"))
@@ -94,6 +105,8 @@ NTFY_TOPIC = os.environ["NTFY_TOPIC"]
 # Modes
 MODE_NORMAL = "NORMAL"
 MODE_SAFE = "SAFE"
+MODE_CONSERVATIVE = "CONSERVATIVE"
+MODE_SPRING = "SPRING"
 
 
 def log(msg):
@@ -325,6 +338,150 @@ def run_safe_mode():
         time.sleep(SAFE_REST_SECONDS)
 
 
+def run_conservative_mode():
+    """
+    Conservative mode: plug stays OFF, brief ON pulses to clear water.
+    Does NOT auto-exit — requires manual restart with CONSERVATIVE_MODE=false.
+    """
+    run_s = CONSERVATIVE_RUN_SECONDS
+    rest_s = CONSERVATIVE_REST_SECONDS
+    log(f"=== ENTERING CONSERVATIVE MODE ({run_s}s ON / {rest_s // 3600}h OFF) ===")
+    log("Plug will stay OFF by default. Will NOT auto-exit. Restart monitor with CONSERVATIVE_MODE=false to resume normal operation.")
+    send_notification(
+        "SUMP PUMP: Conservative mode activated",
+        f"Float switch is stuck. Conservative mode activated.\n\n"
+        f"Pump will run {run_s}s every {rest_s // 3600}h to clear water.\n"
+        f"Plug stays OFF between pulses.\n\n"
+        f"This mode will NOT auto-exit.\n"
+        f"Restart monitor with CONSERVATIVE_MODE=false to resume normal operation."
+    )
+
+    # Start with plug OFF
+    turn_off()
+    cycle_count = 0
+
+    while True:
+        # Rest first (plug OFF)
+        log(f"CONSERVATIVE: resting for {rest_s // 60} min (plug OFF)")
+        time.sleep(rest_s)
+
+        # Brief ON pulse
+        cycle_count += 1
+        log(f"CONSERVATIVE cycle {cycle_count}: turning ON for {run_s}s")
+        turn_on()
+        time.sleep(run_s)
+
+        # Check what happened during the pulse
+        status = get_power_status()
+        power = status["power"] if status else 0
+        temp_c = status["temp_c"] if status else 0
+        log(f"CONSERVATIVE cycle {cycle_count}: pulse done — {power:.1f}W, {temp_c:.1f}C")
+
+        # Turn OFF again
+        turn_off()
+        log(f"CONSERVATIVE cycle {cycle_count}: plug OFF")
+
+        # Periodic update every 3 cycles
+        if cycle_count % 3 == 0:
+            send_notification(
+                f"Sump pump: conservative mode update (cycle {cycle_count})",
+                f"Conservative mode running for {cycle_count} cycles "
+                f"({cycle_count * (run_s + rest_s) // 3600}h total).\n\n"
+                f"Last pulse: {power:.1f}W, {temp_c:.1f}C\n\n"
+                f"Restart monitor with CONSERVATIVE_MODE=false to resume normal operation."
+            )
+
+
+def run_spring_mode():
+    """
+    Spring mode: plug OFF by default, regular ON pulses to clear water.
+    More frequent than conservative (60s ON / 30 min OFF).
+    Auto-exits to NORMAL if pump draws no power during a pulse (water table low).
+    """
+    run_s = SPRING_RUN_SECONDS
+    rest_s = SPRING_REST_SECONDS
+    dry_streak = 0
+    DRY_EXIT_THRESHOLD = 3  # exit after 3 consecutive dry pulses
+
+    log(f"=== ENTERING SPRING MODE ({run_s}s ON / {rest_s // 60} min OFF) ===")
+    log(f"Auto-exits to NORMAL after {DRY_EXIT_THRESHOLD} consecutive dry pulses.")
+    send_notification(
+        "SUMP PUMP: Spring mode activated",
+        f"Spring mode: pump will run {run_s}s every {rest_s // 60} min to clear water.\n\n"
+        f"Plug stays OFF between pulses.\n"
+        f"Will auto-exit to normal monitoring after {DRY_EXIT_THRESHOLD} consecutive "
+        f"dry pulses (no power draw = water table low).\n\n"
+        f"Set SPRING_MODE=false and restart to exit manually."
+    )
+
+    # Start with plug OFF
+    turn_off()
+    cycle_count = 0
+
+    while True:
+        # Rest first (plug OFF)
+        log(f"SPRING: resting for {rest_s // 60} min (plug OFF)")
+        time.sleep(rest_s)
+
+        # ON pulse
+        cycle_count += 1
+        log(f"SPRING cycle {cycle_count}: turning ON for {run_s}s")
+        turn_on()
+        time.sleep(run_s)
+
+        # Check what happened during the pulse
+        status = get_power_status()
+        if status is None:
+            log(f"SPRING cycle {cycle_count}: couldn't reach Shelly, turning OFF")
+            turn_off()
+            continue
+
+        power = status["power"]
+        temp_c = status["temp_c"]
+        pump_ran = power > POWER_THRESHOLD_WATTS
+
+        # Temperature safety
+        if check_temp_safety(status):
+            log("SPRING: overtemp, skipping to rest")
+            dry_streak = 0
+            time.sleep(300)
+            continue
+
+        log(f"SPRING cycle {cycle_count}: pulse done — {power:.1f}W, {temp_c:.1f}C — {'pump ran' if pump_ran else 'DRY'}")
+
+        # Turn OFF again
+        turn_off()
+
+        if pump_ran:
+            dry_streak = 0
+        else:
+            dry_streak += 1
+            log(f"SPRING: dry streak {dry_streak}/{DRY_EXIT_THRESHOLD}")
+
+            if dry_streak >= DRY_EXIT_THRESHOLD:
+                log(f"SPRING: {DRY_EXIT_THRESHOLD} consecutive dry pulses — water table is low, exiting to NORMAL")
+                send_notification(
+                    "Sump pump: spring mode → normal (water table low)",
+                    f"Spring mode ran {cycle_count} cycles. Last {DRY_EXIT_THRESHOLD} pulses "
+                    f"drew no power — water table is low.\n\n"
+                    f"Switching to normal monitoring (plug ON, float controls pump).\n"
+                    f"Restart with SPRING_MODE=true if water returns."
+                )
+                turn_on()
+                return
+
+        # Periodic update every 6 cycles (~3 hours)
+        if cycle_count % 6 == 0:
+            send_notification(
+                f"Sump pump: spring mode update (cycle {cycle_count})",
+                f"Spring mode running for {cycle_count} cycles "
+                f"({cycle_count * (run_s + rest_s) // 60} min total).\n\n"
+                f"Last pulse: {power:.1f}W, {temp_c:.1f}C\n"
+                f"Dry streak: {dry_streak}/{DRY_EXIT_THRESHOLD}\n\n"
+                f"Set SPRING_MODE=false and restart to exit manually."
+            )
+
+
 def shutdown(signum, frame):
     log("Shutting down monitor. Leaving plug in current state.")
     sys.exit(0)
@@ -347,6 +504,19 @@ if __name__ == "__main__":
     log(f"No-run alert after: {NO_RUN_ALERT_HOURS}h")
     log(f"Poll interval: {POLL_INTERVAL_SECONDS}s")
     log(f"AI analyzer: {'enabled -> ' + AI_ANALYZER_URL if AI_ENABLED else 'disabled'}")
+    log(f"Conservative mode: {'ACTIVE (' + str(CONSERVATIVE_RUN_SECONDS) + 's ON / ' + str(CONSERVATIVE_REST_SECONDS // 3600) + 'h OFF)' if CONSERVATIVE_MODE else 'off'}")
+    log(f"Spring mode: {'ACTIVE (' + str(SPRING_RUN_SECONDS) + 's ON / ' + str(SPRING_REST_SECONDS // 60) + 'm OFF)' if SPRING_MODE else 'off'}")
+
+    # Spring mode: regular pulses, auto-exits when water table drops
+    if SPRING_MODE:
+        run_spring_mode()
+        # Returned from spring mode = water table low, fall through to normal monitoring
+        log("Spring mode exited, continuing to normal monitoring")
+
+    # Conservative mode: skip normal startup, go straight to conservative loop
+    if CONSERVATIVE_MODE:
+        run_conservative_mode()
+        sys.exit(0)  # conservative mode never returns, but just in case
 
     # Make sure plug is on
     status = get_power_status()
