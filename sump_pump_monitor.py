@@ -241,6 +241,11 @@ def handle_normal(sm, status):
 
     # Plug should be ON in normal mode
     if not status["output"]:
+        if sm.running_since is not None:
+            sm.output_recovery_until = max(
+                sm.output_recovery_until,
+                time.monotonic() + OUTPUT_RECOVERY_GRACE_SECONDS,
+            )
         log("WARNING: Plug output is OFF unexpectedly! Turning back ON.")
         send_notification(
             "Sump pump: plug was turned off",
@@ -396,7 +401,7 @@ def reconcile_startup_state(sm, status):
         return
 
     if sm.state == NORMAL:
-        if sm.running_since is not None:
+        if sm.running_since is not None and sm.output_recovery_until <= time.monotonic():
             sm.output_recovery_until = time.monotonic() + OUTPUT_RECOVERY_GRACE_SECONDS
         if not status["output"]:
             log("Startup: NORMAL mode requires plug ON, turning ON...")

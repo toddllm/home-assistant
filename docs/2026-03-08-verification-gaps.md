@@ -15,13 +15,14 @@ and what still remains unverified on real hardware.
   a tier `OFF` phase, the running monitor turned it back off on the next active poll.
 - `POWER_CYCLE` resume: restarting in `POWER_CYCLE / ON` resumed the settle phase,
   detected the still-running pump, and fell back to `TIER_1 / OFF`.
+- `COOLDOWN -> NORMAL`: the monitor later observed a full 90-second stable idle window,
+  confirmed the float was unstuck, and returned to `NORMAL` on real hardware.
 - `COOLDOWN -> previous tier`: seeding `COOLDOWN` and restarting caused the monitor to
   turn the plug on, detect the pump running again, and return to `TIER_1 / OFF`.
 - Notification title sanitization: the ntfy `Title` header no longer fails on em dashes.
 
 ## Verified By Unit Test Only
 
-- `COOLDOWN -> NORMAL` after a true stable-idle interval.
 - Dry-pulse exit from a tier back to `NORMAL`.
 - Tier escalation from `TIER_1 -> TIER_2` and `TIER_2 -> TIER_3`.
 - `POWER_CYCLE -> NORMAL` when the pump actually stays idle after power is restored.
@@ -42,17 +43,8 @@ and what still remains unverified on real hardware.
   Rebooting the live plug on purpose was not justified during an active stuck-float
   incident.
 
-## Why `COOLDOWN -> NORMAL` Was Not Live-Proven
-
-The physical float remained stuck throughout testing. A short manual pulse showed the
-pump still began drawing power within about 2 seconds every time the plug was turned on.
-Because of that, software alone could not create a truthful "pump stayed idle during
-cooldown" situation on the real hardware.
-
 ## Recommended Next Live Checks
 
-- After the float is manually freed, force one short `TIER_1` pulse and verify a real
-  `COOLDOWN -> NORMAL` transition on hardware.
 - During the next higher-water event, verify either dry-pulse exit or genuine tier
   escalation under normal unattended control rather than state seeding.
 - When the sump is not under risk, test one controlled Shelly reboot and verify the

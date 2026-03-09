@@ -66,6 +66,25 @@ class PumpStateResumeTests(unittest.TestCase):
         self.assertAlmostEqual(restored.time_in_state(), 75, delta=2.0)
         self.assertAlmostEqual(time.monotonic() - restored.cooldown_started_at, 75, delta=2.0)
 
+    def test_output_recovery_deadline_persists_across_restart(self):
+        sm = self.make_sm()
+        sm.output_recovery_until = time.monotonic() + 8
+        sm.save_state()
+
+        restored = self.make_sm()
+        self.assertTrue(restored.load_state())
+        self.assertGreater(restored.output_recovery_until, time.monotonic())
+        self.assertAlmostEqual(restored.output_recovery_until - time.monotonic(), 8, delta=2.0)
+
+    def test_last_uptime_persists_across_restart(self):
+        sm = self.make_sm()
+        sm.last_uptime = 12345
+        sm.save_state()
+
+        restored = self.make_sm()
+        self.assertTrue(restored.load_state())
+        self.assertEqual(restored.last_uptime, 12345)
+
     def test_startup_reconcile_keeps_existing_running_timer(self):
         sm = self.make_sm()
         sm.running_since = time.monotonic() - 150
@@ -87,6 +106,18 @@ class PumpStateResumeTests(unittest.TestCase):
 
         turn_on.assert_called_once()
         self.assertAlmostEqual(time.monotonic() - sm.running_since, 150, delta=2.0)
+
+    def test_startup_reconcile_preserves_existing_output_recovery_deadline(self):
+        sm = self.make_sm()
+        sm.running_since = time.monotonic() - 150
+        original_deadline = time.monotonic() + 3
+        sm.output_recovery_until = original_deadline
+        status = {"output": True, "power": 0.0, "temp_c": 33.0}
+
+        with patch.object(monitor, "log"):
+            monitor.reconcile_startup_state(sm, status)
+
+        self.assertAlmostEqual(sm.output_recovery_until, original_deadline, delta=0.5)
 
     def test_startup_reconcile_keeps_plug_off_for_off_phase(self):
         sm = self.make_sm()
@@ -171,6 +202,21 @@ class PumpStateResumeTests(unittest.TestCase):
             monitor.handle_normal(sm, status)
 
         self.assertIsNotNone(sm.running_since)
+
+    def test_handle_normal_sets_output_recovery_grace_when_restoring_output(self):
+        sm = self.make_sm()
+        sm.running_since = time.monotonic() - 45
+        status = {"output": False, "power": 0.0, "temp_c": 33.0, "illumination": "dark"}
+
+        with (
+            patch.object(monitor, "log"),
+            patch.object(monitor, "send_notification"),
+            patch.object(monitor, "turn_on") as turn_on,
+        ):
+            monitor.handle_normal(sm, status)
+
+        turn_on.assert_called_once()
+        self.assertGreater(sm.output_recovery_until, time.monotonic())
 
     def test_next_sleep_seconds_uses_active_poll_during_on_phase(self):
         sm = self.make_sm()

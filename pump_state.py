@@ -160,6 +160,12 @@ class PumpStateMachine:
         age = max(0.0, time.time() - wall_ts)
         return time.monotonic() - age
 
+    def _deadline_from_wall(self, wall_ts, fallback=None):
+        """Reconstruct a future monotonic deadline from a saved wall clock."""
+        if wall_ts in (None, 0):
+            return fallback
+        return time.monotonic() + (wall_ts - time.time())
+
     def transition(self, new_state, reason=""):
         """Transition to a new state. Saves state to disk."""
         old = self.state
@@ -224,8 +230,14 @@ class PumpStateMachine:
             "duty_phase": self.duty_phase,
             "running_since_wall": self._wall_from_monotonic(self.running_since),
             "last_pump_run_wall": self._wall_from_monotonic(self.last_pump_run),
+            "output_recovery_until_wall": (
+                self._wall_from_monotonic(self.output_recovery_until)
+                if self.output_recovery_until > time.monotonic()
+                else None
+            ),
             "lockout_reason": self.lockout_reason,
             "pre_cooldown_state": self.pre_cooldown_state,
+            "last_uptime": self.last_uptime,
             "saved_at": time.time(),
             "pid": os.getpid(),
         }
@@ -270,7 +282,15 @@ class PumpStateMachine:
         self.lockout_reason = data.get("lockout_reason", "")
         self.pre_cooldown_state = data.get("pre_cooldown_state")
         self.running_since = self._monotonic_from_wall(data.get("running_since_wall"))
+        output_recovery_until = self._deadline_from_wall(
+            data.get("output_recovery_until_wall"),
+            fallback=0.0,
+        )
+        self.output_recovery_until = (
+            output_recovery_until if output_recovery_until > time.monotonic() else 0.0
+        )
         self.cooldown_started_at = self.state_entered_at if self.state == COOLDOWN else 0.0
+        self.last_uptime = data.get("last_uptime")
 
         # Restore last_pump_run from wall clock
         last_run_wall = data.get("last_pump_run_wall", 0)
