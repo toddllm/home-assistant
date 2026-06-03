@@ -832,6 +832,7 @@ def handle_duty_cycle(sm, status):
             # ON period is over — evaluate and turn OFF
             if pump_running:
                 sm.consecutive_dry = 0
+                sm.last_pump_run = time.monotonic()  # a duty-cycle pulse IS a real run; keep last-run fresh (was only updated in NORMAL)
                 log(f"{sm.state} cycle {sm.cycle_count}: pump ran "
                     f"({status['power']:.1f}W, {status['temp_c']:.1f}C)")
             else:
