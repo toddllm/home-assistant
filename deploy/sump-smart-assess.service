@@ -1,0 +1,12 @@
+[Unit]
+Description=Sump Smart Assess (first-principles classifier + de-duped alerts)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tdeshane
+WorkingDirectory=/home/tdeshane/home-assistant
+ExecStart=/usr/bin/python3 -u /home/tdeshane/home-assistant/sump_assess.py --alert --quiet
+StandardOutput=append:/home/tdeshane/home-assistant/sump_assess.launchd.log
+StandardError=append:/home/tdeshane/home-assistant/sump_assess.launchd.log

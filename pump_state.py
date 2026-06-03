@@ -8,7 +8,7 @@ States:
   TIER_2       - 90s ON / 10 min OFF. Moderate duty cycle.
   TIER_3       - 120s ON / 10 min OFF. Max duty, alerts every cycle.
   COOLDOWN     - Float may have unstuck. Confirm stable idle before NORMAL.
-  LOCKOUT      - Overtemp or prolonged Shelly loss. Pump OFF, manual intervention needed.
+  LOCKOUT      - Overtemp or prolonged Shelly loss. Overtemp is manual-only; Shelly loss can auto-recover.
 
 Transitions:
   NORMAL → stuck 3 min → POWER_CYCLE
@@ -22,7 +22,8 @@ Transitions:
   COOLDOWN → pump restarts → resume previous tier
   Any state → overtemp → LOCKOUT
   Any state → Shelly lost 30 min → LOCKOUT
-  LOCKOUT → manual restart only
+  LOCKOUT (Shelly loss) → NORMAL after stable connectivity
+  LOCKOUT (other reasons) → manual restart only
 """
 
 import json
@@ -132,6 +133,7 @@ class PumpStateMachine:
         self.last_shelly_contact = time.monotonic()
         self.shelly_warn_alerted = False
         self.shelly_critical_alerted = False
+        self.shelly_recovered_at = None
 
         # Reboot detection
         self.last_uptime = None
@@ -146,6 +148,9 @@ class PumpStateMachine:
         # Weather risk (from AI analyzer)
         self.cached_weather_risk = 0.3
         self.last_weather_check = 0.0
+
+        # Float unstick attempts
+        self.last_unstick_at = 0.0  # monotonic timestamp of last attempt
 
     def _wall_from_monotonic(self, monotonic_ts):
         """Convert a monotonic timestamp to a best-effort wall clock."""
@@ -167,7 +172,17 @@ class PumpStateMachine:
         return time.monotonic() + (wall_ts - time.time())
 
     def transition(self, new_state, reason=""):
-        """Transition to a new state. Saves state to disk."""
+        """Transition to a new state. Saves state to disk.
+
+        Self-transitions (state == new_state) are silently no-op'd to avoid
+        log spam. The lockout_reason is updated in case the description changed
+        slightly (e.g., temp drifted from 60.2C to 60.4C while still locked out).
+        """
+        if new_state == self.state:
+            # In-state poll re-check; just refresh the reason and return without logging.
+            if new_state == LOCKOUT and reason:
+                self.lockout_reason = reason
+            return
         old = self.state
         self.state = new_state
         self.state_entered_at = time.monotonic()
@@ -184,6 +199,10 @@ class PumpStateMachine:
 
         if new_state == LOCKOUT:
             self.lockout_reason = reason
+            self.shelly_recovered_at = None
+        else:
+            self.lockout_reason = ""
+            self.shelly_recovered_at = None
 
         desc = f" ({reason})" if reason else ""
         self.log(f"STATE: {old} -> {new_state}{desc}")
@@ -236,8 +255,10 @@ class PumpStateMachine:
                 else None
             ),
             "lockout_reason": self.lockout_reason,
+            "shelly_recovered_wall": self._wall_from_monotonic(self.shelly_recovered_at),
             "pre_cooldown_state": self.pre_cooldown_state,
             "last_uptime": self.last_uptime,
+            "last_unstick_wall": self._wall_from_monotonic(self.last_unstick_at) if self.last_unstick_at > 0 else None,
             "saved_at": time.time(),
             "pid": os.getpid(),
         }
@@ -261,8 +282,8 @@ class PumpStateMachine:
         age = time.time() - data.get("saved_at", 0)
         saved_state = data.get("state", NORMAL)
 
-        # Stale state (> 2 hours) — start fresh
-        if age > 7200:
+        # Stale state (> 6 hours) — start fresh (extended for away mode)
+        if age > 21600:
             self.log(f"State file is {age / 60:.0f} min old, starting fresh")
             return False
 
@@ -280,6 +301,7 @@ class PumpStateMachine:
         self.consecutive_dry = data.get("consecutive_dry", 0)
         self.duty_phase = data.get("duty_phase", PHASE_OFF)
         self.lockout_reason = data.get("lockout_reason", "")
+        self.shelly_recovered_at = self._monotonic_from_wall(data.get("shelly_recovered_wall"))
         self.pre_cooldown_state = data.get("pre_cooldown_state")
         self.running_since = self._monotonic_from_wall(data.get("running_since_wall"))
         output_recovery_until = self._deadline_from_wall(
@@ -291,6 +313,11 @@ class PumpStateMachine:
         )
         self.cooldown_started_at = self.state_entered_at if self.state == COOLDOWN else 0.0
         self.last_uptime = data.get("last_uptime")
+
+        # Restore unstick tracking
+        self.last_unstick_at = self._monotonic_from_wall(
+            data.get("last_unstick_wall"), fallback=0.0
+        )
 
         # Restore last_pump_run from wall clock
         last_run_wall = data.get("last_pump_run_wall", 0)

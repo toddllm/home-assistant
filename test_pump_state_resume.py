@@ -85,6 +85,16 @@ class PumpStateResumeTests(unittest.TestCase):
         self.assertTrue(restored.load_state())
         self.assertEqual(restored.last_uptime, 12345)
 
+    def test_shelly_recovered_timer_persists_across_restart(self):
+        sm = self.make_sm()
+        sm.shelly_recovered_at = time.monotonic() - 42
+        sm.save_state()
+
+        restored = self.make_sm()
+        self.assertTrue(restored.load_state())
+        self.assertIsNotNone(restored.shelly_recovered_at)
+        self.assertAlmostEqual(time.monotonic() - restored.shelly_recovered_at, 42, delta=2.0)
+
     def test_startup_reconcile_keeps_existing_running_timer(self):
         sm = self.make_sm()
         sm.running_since = time.monotonic() - 150
@@ -331,6 +341,72 @@ class PumpStateResumeTests(unittest.TestCase):
 
         turn_on.assert_called_once()
         self.assertEqual(sm.state, pump_state.NORMAL)
+
+    def test_startup_reconcile_does_not_force_output_off_for_connectivity_lockout(self):
+        sm = self.make_sm()
+        sm.transition(pump_state.LOCKOUT, "Shelly unreachable 30 min")
+        status = {"output": True, "power": 0.0, "temp_c": 33.0}
+
+        with (
+            patch.object(monitor, "log"),
+            patch.object(monitor, "turn_off") as turn_off,
+            patch.object(monitor, "SHELLY_RECOVERY_STABLE_SECONDS", 300),
+        ):
+            monitor.reconcile_startup_state(sm, status)
+
+        turn_off.assert_not_called()
+        self.assertIsNotNone(sm.shelly_recovered_at)
+
+    def test_connectivity_lockout_auto_recovers_after_stable_reachability(self):
+        sm = self.make_sm()
+        sm.transition(pump_state.LOCKOUT, "Shelly unreachable 30 min")
+        sm.shelly_recovered_at = time.monotonic() - 301
+        status = {"output": True, "power": 0.0, "temp_c": 33.0}
+
+        with (
+            patch.object(monitor, "log"),
+            patch.object(monitor, "turn_on") as turn_on,
+            patch.object(monitor, "send_notification"),
+            patch.object(monitor, "SHELLY_RECOVERY_STABLE_SECONDS", 300),
+        ):
+            recovered = monitor.maybe_recover_shelly_lockout(sm, status)
+
+        self.assertTrue(recovered)
+        turn_on.assert_not_called()
+        self.assertEqual(sm.state, pump_state.NORMAL)
+
+    def test_connectivity_lockout_recovery_restores_output_when_off(self):
+        sm = self.make_sm()
+        sm.transition(pump_state.LOCKOUT, "Shelly unreachable 30 min")
+        sm.shelly_recovered_at = time.monotonic() - 301
+        status = {"output": False, "power": 0.0, "temp_c": 33.0}
+
+        with (
+            patch.object(monitor, "log"),
+            patch.object(monitor, "turn_on") as turn_on,
+            patch.object(monitor, "send_notification"),
+            patch.object(monitor, "SHELLY_RECOVERY_STABLE_SECONDS", 300),
+        ):
+            recovered = monitor.maybe_recover_shelly_lockout(sm, status)
+
+        self.assertTrue(recovered)
+        turn_on.assert_called_once()
+        self.assertEqual(sm.state, pump_state.NORMAL)
+        self.assertGreater(sm.output_recovery_until, time.monotonic())
+
+    def test_overtemp_lockout_stays_manual(self):
+        sm = self.make_sm()
+        sm.transition(pump_state.LOCKOUT, "overtemp 61.0C")
+        status = {"output": True, "power": 0.0, "temp_c": 33.0}
+
+        with (
+            patch.object(monitor, "log"),
+            patch.object(monitor, "turn_off") as turn_off,
+        ):
+            monitor.reconcile_startup_state(sm, status)
+
+        turn_off.assert_called_once()
+        self.assertEqual(sm.state, pump_state.LOCKOUT)
 
     def test_check_single_instance_rejects_existing_pid(self):
         self.assertTrue(pump_state.check_single_instance(lambda _msg: None))

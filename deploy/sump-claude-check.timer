@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Sump Claude judgment pass at 00:05/06:05/12:05/18:05 local
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:05:00
+AccuracySec=1m
+Persistent=false
+
+[Install]
+WantedBy=timers.target

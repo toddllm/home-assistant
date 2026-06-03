@@ -1,0 +1,10 @@
+[Unit]
+Description=Sump Claude judgment pass (LLM trend/anomaly check on top of smart-assess)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tdeshane
+WorkingDirectory=/home/tdeshane/home-assistant
+ExecStart=/bin/bash /home/tdeshane/home-assistant/sump_claude_check.sh

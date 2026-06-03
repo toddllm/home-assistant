@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Sump Pump Guardian every 2 minutes
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=120
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

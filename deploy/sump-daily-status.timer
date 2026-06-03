@@ -1,0 +1,10 @@
+[Unit]
+Description=Send sump daily status digest at 08:00 local
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

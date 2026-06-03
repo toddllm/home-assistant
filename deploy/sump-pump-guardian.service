@@ -1,0 +1,12 @@
+[Unit]
+Description=Sump Pump Guardian (independent safety backstop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tdeshane
+WorkingDirectory=/home/tdeshane/home-assistant
+ExecStart=/usr/bin/python3 -u /home/tdeshane/home-assistant/sump_pump_guardian.py
+StandardOutput=append:/home/tdeshane/home-assistant/sump_pump_guardian.launchd.log
+StandardError=append:/home/tdeshane/home-assistant/sump_pump_guardian.launchd.log
