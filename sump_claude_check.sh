@@ -13,6 +13,14 @@ cd "$SCRIPT_DIR" || exit 1
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+# Long-lived OAuth token from `claude setup-token` (Claude Max). Stored outside
+# the repo with 600 perms so it is never committed. Headless claude --print reads
+# CLAUDE_CODE_OAUTH_TOKEN from the environment.
+TOKEN_FILE="${CLAUDE_OAUTH_TOKEN_FILE:-$HOME/.config/sump/claude_oauth_token}"
+if [ -r "$TOKEN_FILE" ]; then
+    export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")"
+fi
+
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 PROMPT="$(cat "$SCRIPT_DIR/sump_claude_prompt.txt")"
 

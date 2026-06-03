@@ -49,7 +49,7 @@ drops pumping.
 | `sump-pump-guardian.timer` | 120s | independent hard safety: 70C force-OFF, 60C+running cooling rest, >4min run rest, no-run/unreachable/IP-drift alerts |
 | `sump-smart-assess.timer` | 15min | first-principles classifier + de-duped WARN/CRIT alerts |
 | `sump-daily-status.timer` | daily 08:00 | one digest: pump + primary-service health + best-effort Mac-standby reachability (informational, never alarms on Mac offline) |
-| `sump-claude-check.timer` | 00/06/12/18:05 | **installed but DISABLED** — needs `claude` CLI + Anthropic auth on toddllm |
+| `sump-claude-check.timer` | 00/06/12/18:05 | LLM judgment pass — live. Claude Code in `~/.local/bin`, auth via a `claude setup-token` long-lived token in `~/.config/sump/claude_oauth_token` (600, outside repo) that the script exports as `CLAUDE_CODE_OAUTH_TOKEN` |
 
 Unit files are checked into `deploy/`. Install pattern:
 `sudo install -m 644 deploy/<unit> /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now <timer>`.
@@ -61,9 +61,12 @@ were already portable.
 
 ## Known follow-ups
 
-- **claude-check auth**: install `claude` (no node/npm on toddllm; stale
-  `~/.claude/.credentials.json` from Jan 24) and authenticate, then
-  `systemctl enable --now sump-claude-check.timer`.
+- ~~claude-check auth~~ **DONE 2026-06-02**: Claude Code 2.1.161 installed
+  (`~/.local/bin/claude`); auth via `claude setup-token` (Max subscription,
+  ~1yr) stored in `~/.config/sump/claude_oauth_token` (600, gitignored path,
+  exported as `CLAUDE_CODE_OAUTH_TOKEN` by the script). Timer enabled; first run
+  verified a correct no-escalation judgment. Token stays fresh as long as the
+  6-hourly runs keep happening (the Jan token died from 4 months idle).
 - **smart-assess run-recency is brittle**: it parses the monitor *log* for
   `cycle N: pump ran (...)` lines (TIER-only). On a fresh start / NORMAL float
   control it can read a stale "last run" (caused a one-off false `FLOOD_RISK` at
