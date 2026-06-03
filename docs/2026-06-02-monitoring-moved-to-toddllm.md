@@ -76,6 +76,15 @@ were already portable.
 
 ## Fail back to the Mac (manual)
 
-On the Mac: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sump.pump-monitor.plist`
-(and the other `com.sump.*.plist`). First stop toddllm's monitor so only one
-controller is active.
+The Mac jobs are persistently **disabled** (`launchctl disable`), so they will NOT
+auto-load on reboot/login. To fail back:
+
+1. Stand toddllm down first (so only one controller):
+   `ssh toddllm 'sudo systemctl stop sump-pump-monitor.service sump-pump-guardian.timer sump-smart-assess.timer'`
+2. On the Mac, re-enable + load each service:
+   `launchctl enable gui/$(id -u)/com.sump.pump-monitor`
+   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sump.pump-monitor.plist`
+   (repeat for `com.sump.pump-guardian`, `com.sump.pump-watchdog`, `com.sump.smart-assess`, `com.sump.claude-check`).
+
+To re-disable the Mac after failing back to toddllm: `launchctl bootout` then
+`launchctl disable` each `gui/$(id -u)/com.sump.*`.

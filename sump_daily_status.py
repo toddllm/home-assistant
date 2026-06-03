@@ -178,7 +178,7 @@ def render(info: dict) -> tuple[str, str, str]:
         "",
         "STANDBY (Mac, cold)",
         f"  {STANDBY_HOST}: {'reachable' if info.get('standby_reachable') else 'offline (informational — standby sleeps/leaves the LAN, not an alert)'}",
-        "  fail back   : on the Mac, `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sump.pump-monitor.plist`",
+        "  fail back   : stop toddllm monitor, then on the Mac `launchctl enable gui/$(id -u)/com.sump.pump-monitor && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sump.pump-monitor.plist`",
         "",
         "(Daily digest. Pump anomalies are alerted separately by the monitor, guardian, and smart-assess.)",
     ]
