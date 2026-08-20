@@ -427,9 +427,34 @@ class PumpStateResumeTests(unittest.TestCase):
             patch.object(monitor.urllib.request, "urlopen", side_effect=fake_urlopen),
             patch.object(monitor, "log"),
         ):
-            monitor.send_notification("SUMP PUMP: Stuck float — entering TIER 1", "body")
+            monitor.send_notification("SUMP PUMP: Stuck float — entering TIER 1", "body", urgent=True)
 
-        self.assertEqual(captured["title"], "SUMP PUMP: Stuck float - entering TIER 1")
+        self.assertEqual(captured["title"], "URGENT: SUMP PUMP: Stuck float - entering TIER 1")
+
+    def test_send_notification_skips_disabled_log_email(self):
+        with (
+            patch.object(monitor, "NOTIFY_EMAILS_LOG", []),
+            patch.object(monitor.smtplib, "SMTP_SSL") as smtp_ssl,
+            patch.object(monitor.urllib.request, "urlopen") as urlopen,
+            patch.object(monitor, "log") as log,
+        ):
+            monitor.send_notification("Routine cycle", "body")
+
+        smtp_ssl.assert_not_called()
+        urlopen.assert_not_called()
+        log.assert_called_once_with("LOG email skipped: no recipients configured")
+
+    def test_urgent_ntfy_still_sends_when_urgent_email_is_disabled(self):
+        with (
+            patch.object(monitor, "NOTIFY_EMAILS_URGENT", []),
+            patch.object(monitor.smtplib, "SMTP_SSL") as smtp_ssl,
+            patch.object(monitor.urllib.request, "urlopen") as urlopen,
+            patch.object(monitor, "log"),
+        ):
+            monitor.send_notification("Pump safety alert", "body", urgent=True)
+
+        smtp_ssl.assert_not_called()
+        urlopen.assert_called_once()
 
 
 if __name__ == "__main__":

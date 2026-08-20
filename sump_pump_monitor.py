@@ -286,17 +286,20 @@ def send_notification(subject, body, urgent=False):
     """
     recipients = NOTIFY_EMAILS_URGENT if urgent else NOTIFY_EMAILS_LOG
     final_subject = f"URGENT: {subject}" if urgent else subject
-    try:
-        msg = MIMEText(body)
-        msg["Subject"] = final_subject
-        msg["From"] = GMAIL_USER
-        msg["To"] = ", ".join(recipients)
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
-            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_USER, recipients, msg.as_string())
-        log(f"{'URGENT' if urgent else 'LOG'} email sent to {', '.join(recipients)}: {subject}")
-    except Exception as e:
-        log(f"ERROR: Failed to send email ({'URGENT' if urgent else 'LOG'}): {e}")
+    if recipients:
+        try:
+            msg = MIMEText(body)
+            msg["Subject"] = final_subject
+            msg["From"] = GMAIL_USER
+            msg["To"] = ", ".join(recipients)
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.sendmail(GMAIL_USER, recipients, msg.as_string())
+            log(f"{'URGENT' if urgent else 'LOG'} email sent to {', '.join(recipients)}: {subject}")
+        except Exception as e:
+            log(f"ERROR: Failed to send email ({'URGENT' if urgent else 'LOG'}): {e}")
+    else:
+        log(f"{'URGENT' if urgent else 'LOG'} email skipped: no recipients configured")
 
     if not urgent:
         return  # ntfy is for URGENT only
